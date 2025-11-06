@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [ "main" ]
   schedule:
-    - cron: '0 2 * * 0' # optional weekly run
+    - cron: '0 2 * * 0'  # optional weekly run
 
 jobs:
   analyze:
@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'javascript' ]  # use this for both JavaScript and TypeScript
+        language: [ 'javascript' ]  # covers both JavaScript and TypeScript
 
     steps:
     - name: Checkout repository
@@ -30,11 +30,30 @@ jobs:
       uses: github/codeql-action/init@v4
       with:
         languages: ${{ matrix.language }}
-        # optional if you want custom queries:
-        # queries: security-and-quality
+        queries: security-and-quality   # enable full rule set
 
     - name: Autobuild
       uses: github/codeql-action/autobuild@v4
 
     - name: Perform CodeQL Analysis
+      id: analyze
       uses: github/codeql-action/analyze@v4
+      with:
+        output: results
+
+    # --- Generate HTML + SARIF Reports ---
+    - name: Install SARIF to HTML converter
+      run: npm install -g sarif-html
+
+    - name: Convert SARIF to HTML
+      run: |
+        mkdir -p reports
+        sarif-html -i results/javascript.sarif -o reports/codeql-report.html
+
+    - name: Upload SARIF and HTML reports as artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: codeql-analysis-reports
+        path: |
+          results/
+          reports/
