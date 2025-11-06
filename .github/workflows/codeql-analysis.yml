@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [ "main" ]
   schedule:
-    - cron: '0 2 * * 0'  # optional weekly scan (Sundays 2 AM UTC)
+    - cron: '0 2 * * 0'  # weekly scan
 
 jobs:
   analyze:
@@ -20,58 +20,90 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'javascript' ]  # covers both JavaScript and TypeScript
+        language: [ 'javascript' ]  # covers both JS and TS
 
     steps:
-    # ---------------------------------------------------------
-    # Checkout repository
-    # ---------------------------------------------------------
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    # ---------------------------------------------------------
-    # Initialize CodeQL
-    # ---------------------------------------------------------
-    - name: Initialize CodeQL
-      uses: github/codeql-action/init@v4
-      with:
-        languages: ${{ matrix.language }}
-        queries: security-and-quality   # full rule set: security + maintainability
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-and-quality
 
-    # ---------------------------------------------------------
-    # Build (autodetects TypeScript / JS build system)
-    # ---------------------------------------------------------
-    - name: Autobuild
-      uses: github/codeql-action/autobuild@v4
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v4
 
-    # ---------------------------------------------------------
-    # Perform CodeQL Analysis
-    # ---------------------------------------------------------
-    - name: Perform CodeQL Analysis
-      id: analyze
-      uses: github/codeql-action/analyze@v4
-      with:
-        output: results
+      - name: Perform CodeQL Analysis
+        id: analyze
+        uses: github/codeql-action/analyze@v4
+        with:
+          output: results
 
-    # ---------------------------------------------------------
-    # Generate readable HTML report using sarif-tools
-    # ---------------------------------------------------------
-    - name: Install SARIF tools
-      run: npm install -g sarif-tools
+      # ---- Export reports without external deps ----
+      - name: Prepare reports dir
+        run: mkdir -p reports
 
-    - name: Convert SARIF to HTML and CSV
-      run: |
-        mkdir -p reports
-        sarif-to-html results/javascript.sarif > reports/codeql-report.html
-        sarif-to-csv results/javascript.sarif > reports/codeql-report.csv
+      - name: Export CSV from SARIF with jq
+        shell: bash
+        run: |
+          FILE="results/javascript.sarif"
+          if [ ! -f "$FILE" ]; then
+            echo "SARIF not found at $FILE"; exit 1
+          fi
+          # CSV: ruleId, level, message, file, line
+          jq -r '
+            .runs[]
+            | .results[]
+            | [
+                (.ruleId // ""),
+                (.level // (.properties.severity // "note")),
+                (.message.text // "" | gsub("[\\r\\n]+"; " ") | gsub("\""; "\"\"")),
+                (.locations[0].physicalLocation.artifactLocation.uri // ""),
+                (.locations[0].physicalLocation.region.startLine // 0)
+              ]
+            | @csv
+          ' "$FILE" > reports/codeql-report.csv
 
-    # ---------------------------------------------------------
-    # Upload reports as workflow artifacts
-    # ---------------------------------------------------------
-    - name: Upload CodeQL reports (SARIF, HTML, CSV)
-      uses: actions/upload-artifact@v4
-      with:
-        name: codeql-analysis-reports
-        path: |
-          results/
-          reports/
+      - name: Write summary to Job Summary
+        shell: bash
+        run: |
+          FILE="results/javascript.sarif"
+          echo "# CodeQL Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          # Totals by severity (fallback to .properties.severity or default note)
+          jq -r '
+            def lvl:
+              if has("level") then .level
+              elif .properties and .properties.severity then (.properties.severity | ascii_downcase)
+              else "note" end;
+            [ .runs[].results[] | lvl ] as $lvls
+            |
+            "Total: \($lvls|length)\n" +
+            "Errors: \($lvls|map(select(.==\"error\"))|length)\n" +
+            "Warnings: \($lvls|map(select(.==\"warning\"))|length)\n" +
+            "Notes: \($lvls|map(select(.==\"note\"))|length)"
+          ' "$FILE" >> "$GITHUB_STEP_SUMMARY"
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Top rules:" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          jq -r '
+            .runs[].results[]
+            | .ruleId
+            | select(. != null)
+          ' "$FILE" \
+          | sort | uniq -c | sort -rn | head -20 \
+          | awk '{printf "- %s (%s findings)\n", $2, $1}' >> "$GITHUB_STEP_SUMMARY"
+
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "> Full SARIF and CSV are available in the workflow artifacts." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload SARIF and CSV artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-analysis-reports
+          path: |
+            results/
+            reports/
