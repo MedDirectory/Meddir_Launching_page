@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [ "main" ]
   schedule:
-    - cron: '0 2 * * 0'  # optional weekly run
+    - cron: '0 2 * * 0'  # optional weekly scan (Sundays 2 AM UTC)
 
 jobs:
   analyze:
@@ -23,34 +23,52 @@ jobs:
         language: [ 'javascript' ]  # covers both JavaScript and TypeScript
 
     steps:
+    # ---------------------------------------------------------
+    # Checkout repository
+    # ---------------------------------------------------------
     - name: Checkout repository
       uses: actions/checkout@v4
 
+    # ---------------------------------------------------------
+    # Initialize CodeQL
+    # ---------------------------------------------------------
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v4
       with:
         languages: ${{ matrix.language }}
-        queries: security-and-quality   # enable full rule set
+        queries: security-and-quality   # full rule set: security + maintainability
 
+    # ---------------------------------------------------------
+    # Build (autodetects TypeScript / JS build system)
+    # ---------------------------------------------------------
     - name: Autobuild
       uses: github/codeql-action/autobuild@v4
 
+    # ---------------------------------------------------------
+    # Perform CodeQL Analysis
+    # ---------------------------------------------------------
     - name: Perform CodeQL Analysis
       id: analyze
       uses: github/codeql-action/analyze@v4
       with:
         output: results
 
-    # --- Generate HTML + SARIF Reports ---
-    - name: Install SARIF to HTML converter
-      run: npm install -g sarif-html
+    # ---------------------------------------------------------
+    # Generate readable HTML report using sarif-tools
+    # ---------------------------------------------------------
+    - name: Install SARIF tools
+      run: npm install -g sarif-tools
 
-    - name: Convert SARIF to HTML
+    - name: Convert SARIF to HTML and CSV
       run: |
         mkdir -p reports
-        sarif-html -i results/javascript.sarif -o reports/codeql-report.html
+        sarif-to-html results/javascript.sarif > reports/codeql-report.html
+        sarif-to-csv results/javascript.sarif > reports/codeql-report.csv
 
-    - name: Upload SARIF and HTML reports as artifacts
+    # ---------------------------------------------------------
+    # Upload reports as workflow artifacts
+    # ---------------------------------------------------------
+    - name: Upload CodeQL reports (SARIF, HTML, CSV)
       uses: actions/upload-artifact@v4
       with:
         name: codeql-analysis-reports
