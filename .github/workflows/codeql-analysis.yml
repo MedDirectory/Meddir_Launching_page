@@ -23,36 +23,53 @@ jobs:
         language: [ 'javascript' ]  # covers both JS and TS
 
     steps:
+      # ---------------------------------------------------------
+      # Checkout source
+      # ---------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ---------------------------------------------------------
+      # Initialize CodeQL
+      # ---------------------------------------------------------
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
-          queries: security-and-quality
+          queries: security-and-quality  # full rule set
 
+      # ---------------------------------------------------------
+      # Attempt autobuild (for TS/JS usually succeeds)
+      # ---------------------------------------------------------
       - name: Autobuild
         uses: github/codeql-action/autobuild@v4
 
+      # ---------------------------------------------------------
+      # Run CodeQL Analysis
+      # ---------------------------------------------------------
       - name: Perform CodeQL Analysis
         id: analyze
         uses: github/codeql-action/analyze@v4
         with:
           output: results
 
-      # ---- Export reports without external deps ----
-      - name: Prepare reports dir
+      # ---------------------------------------------------------
+      # Prepare report directory
+      # ---------------------------------------------------------
+      - name: Prepare reports directory
         run: mkdir -p reports
 
-      - name: Export CSV from SARIF with jq
+      # ---------------------------------------------------------
+      # Export CSV from SARIF using jq
+      # ---------------------------------------------------------
+      - name: Export CSV from SARIF
         shell: bash
         run: |
           FILE="results/javascript.sarif"
           if [ ! -f "$FILE" ]; then
             echo "SARIF not found at $FILE"; exit 1
           fi
-          # CSV: ruleId, level, message, file, line
+          echo "ruleId,level,message,file,line" > reports/codeql-report.csv
           jq -r '
             .runs[]
             | .results[]
@@ -64,43 +81,49 @@ jobs:
                 (.locations[0].physicalLocation.region.startLine // 0)
               ]
             | @csv
-          ' "$FILE" > reports/codeql-report.csv
+          ' "$FILE" >> reports/codeql-report.csv
 
-      - name: Write summary to Job Summary
+      # ---------------------------------------------------------
+      # Summarize results directly in GitHub UI
+      # ---------------------------------------------------------
+      - name: Write CodeQL Summary
         shell: bash
         run: |
           FILE="results/javascript.sarif"
-          echo "# CodeQL Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "# 🧠 CodeQL Scan Summary" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          # Totals by severity (fallback to .properties.severity or default note)
+
+          # --- Overall counts by severity ---
           jq -r '
             def lvl:
               if has("level") then .level
-              elif .properties and .properties.severity then (.properties.severity | ascii_downcase)
+              elif (.properties | type=="object") and (.properties.severity? != null)
+                then (.properties.severity | ascii_downcase)
               else "note" end;
-            [ .runs[].results[] | lvl ] as $lvls
-            |
-            "Total: \($lvls|length)\n" +
-            "Errors: \($lvls|map(select(.==\"error\"))|length)\n" +
-            "Warnings: \($lvls|map(select(.==\"warning\"))|length)\n" +
+            [ .runs[].results[] | lvl ] as $lvls |
+            "Total Findings: \($lvls|length)" + "\n" +
+            "Errors: \($lvls|map(select(.==\"error\"))|length)" + "\n" +
+            "Warnings: \($lvls|map(select(.==\"warning\"))|length)" + "\n" +
             "Notes: \($lvls|map(select(.==\"note\"))|length)"
           ' "$FILE" >> "$GITHUB_STEP_SUMMARY"
 
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Top rules:" >> "$GITHUB_STEP_SUMMARY"
+          echo "## 🔍 Top Rule IDs" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
+
           jq -r '
-            .runs[].results[]
-            | .ruleId
+            .runs[].results[].ruleId
             | select(. != null)
-          ' "$FILE" \
-          | sort | uniq -c | sort -rn | head -20 \
-          | awk '{printf "- %s (%s findings)\n", $2, $1}' >> "$GITHUB_STEP_SUMMARY"
+          ' "$FILE" | sort | uniq -c | sort -rn | head -15 \
+            | awk '{printf "- **%s** — %s findings\n", $2, $1}' >> "$GITHUB_STEP_SUMMARY"
 
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "> Full SARIF and CSV are available in the workflow artifacts." >> "$GITHUB_STEP_SUMMARY"
+          echo "> 📁 Full SARIF and CSV reports are available as workflow artifacts." >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload SARIF and CSV artifacts
+      # ---------------------------------------------------------
+      # Upload SARIF + CSV for manual inspection
+      # ---------------------------------------------------------
+      - name: Upload CodeQL Reports
         uses: actions/upload-artifact@v4
         with:
           name: codeql-analysis-reports
