@@ -20,11 +20,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'javascript' ]  # covers both JS and TS
+        language: [ 'javascript' ]  # covers both JavaScript and TypeScript
 
     steps:
       # ---------------------------------------------------------
-      # Checkout source
+      # Checkout repository
       # ---------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -36,10 +36,10 @@ jobs:
         uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
-          queries: security-and-quality  # full rule set
+          queries: security-and-quality  # enables full rule set
 
       # ---------------------------------------------------------
-      # Attempt autobuild (for TS/JS usually succeeds)
+      # Build / compile (autodetects for JS/TS)
       # ---------------------------------------------------------
       - name: Autobuild
         uses: github/codeql-action/autobuild@v4
@@ -54,13 +54,13 @@ jobs:
           output: results
 
       # ---------------------------------------------------------
-      # Prepare report directory
+      # Prepare report directories
       # ---------------------------------------------------------
       - name: Prepare reports directory
         run: mkdir -p reports
 
       # ---------------------------------------------------------
-      # Export CSV from SARIF using jq
+      # Export CSV from SARIF (no dependencies)
       # ---------------------------------------------------------
       - name: Export CSV from SARIF
         shell: bash
@@ -84,7 +84,7 @@ jobs:
           ' "$FILE" >> reports/codeql-report.csv
 
       # ---------------------------------------------------------
-      # Summarize results directly in GitHub UI
+      # Write GitHub Job Summary (safe jq syntax)
       # ---------------------------------------------------------
       - name: Write CodeQL Summary
         shell: bash
@@ -101,11 +101,17 @@ jobs:
                 then (.properties.severity | ascii_downcase)
               else "note" end;
             [ .runs[].results[] | lvl ] as $lvls |
-            "Total Findings: \($lvls|length)" + "\n" +
-            "Errors: \($lvls|map(select(.==\"error\"))|length)" + "\n" +
-            "Warnings: \($lvls|map(select(.==\"warning\"))|length)" + "\n" +
-            "Notes: \($lvls|map(select(.==\"note\"))|length)"
-          ' "$FILE" >> "$GITHUB_STEP_SUMMARY"
+            {
+              total: ($lvls|length),
+              errors: ($lvls|map(select(.=="error"))|length),
+              warnings: ($lvls|map(select(.=="warning"))|length),
+              notes: ($lvls|map(select(.=="note"))|length)
+            }
+          ' "$FILE" |
+          awk -F: '/total/{print "Total Findings:"$2}
+                   /errors/{print "Errors:"$2}
+                   /warnings/{print "Warnings:"$2}
+                   /notes/{print "Notes:"$2}' >> "$GITHUB_STEP_SUMMARY"
 
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "## 🔍 Top Rule IDs" >> "$GITHUB_STEP_SUMMARY"
@@ -121,7 +127,7 @@ jobs:
           echo "> 📁 Full SARIF and CSV reports are available as workflow artifacts." >> "$GITHUB_STEP_SUMMARY"
 
       # ---------------------------------------------------------
-      # Upload SARIF + CSV for manual inspection
+      # Upload SARIF + CSV artifacts for manual download
       # ---------------------------------------------------------
       - name: Upload CodeQL Reports
         uses: actions/upload-artifact@v4
