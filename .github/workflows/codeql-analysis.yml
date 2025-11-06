@@ -5,6 +5,8 @@ on:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
+  schedule:
+    - cron: '0 2 * * 0' # optional weekly run
 
 jobs:
   analyze:
@@ -18,16 +20,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'javascript', 'python' ]  # adapt to your repo’s languages
+        language: [ 'javascript' ]  # use this for both JavaScript and TypeScript
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Initialize CodeQL
       uses: github/codeql-action/init@v4
       with:
         languages: ${{ matrix.language }}
+        # optional if you want custom queries:
+        # queries: security-and-quality
 
     - name: Autobuild
       uses: github/codeql-action/autobuild@v4
